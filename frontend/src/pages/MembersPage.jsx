@@ -16,7 +16,8 @@ export default function MembersPage() {
     firstName: '',
     lastName: '',
     email: '',
-    role: ''
+    role: '',
+    password: ''
   });
 
   useEffect(() => {
@@ -43,7 +44,8 @@ export default function MembersPage() {
       firstName: '',
       lastName: '',
       email: '',
-      role: 'Développeur Fullstack'
+      role: 'Développeur Fullstack',
+      password: 'password123'
     });
     setIsModalOpen(true);
   };
@@ -54,7 +56,8 @@ export default function MembersPage() {
       firstName: member.firstName,
       lastName: member.lastName,
       email: member.email,
-      role: member.role
+      role: member.role,
+      password: ''
     });
     setIsModalOpen(true);
   };
@@ -233,6 +236,18 @@ export default function MembersPage() {
                     value={formData.role}
                     onChange={(e) => setFormData({ ...formData, role: e.target.value })}
                     placeholder="Ex: Développeuse Fullstack, UI/UX Designer..."
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">{editingMember ? "Mot de passe (laisser vide pour conserver l'ancien)" : "Mot de passe *"}</label>
+                  <input 
+                    type="password" 
+                    className="form-control" 
+                    required={!editingMember}
+                    value={formData.password}
+                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                    placeholder="Entrez le mot de passe du collaborateur"
                   />
                 </div>
               </div>

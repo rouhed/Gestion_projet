@@ -50,6 +50,9 @@ public class MemberService {
         member.setLastName(dto.getLastName());
         member.setEmail(dto.getEmail());
         member.setRole(dto.getRole());
+        if (dto.getPassword() != null && !dto.getPassword().trim().isEmpty()) {
+            member.setPassword(dto.getPassword());
+        }
         Member updated = memberRepository.save(member);
         return convertToDTO(updated);
     }
@@ -91,6 +94,7 @@ public class MemberService {
                 .lastName(member.getLastName())
                 .email(member.getEmail())
                 .role(member.getRole())
+                .password(member.getPassword())
                 .build();
     }
 
@@ -102,6 +106,7 @@ public class MemberService {
                 .lastName(dto.getLastName())
                 .email(dto.getEmail())
                 .role(dto.getRole())
+                .password(dto.getPassword() != null && !dto.getPassword().trim().isEmpty() ? dto.getPassword() : "password123")
                 .build();
     }
 }

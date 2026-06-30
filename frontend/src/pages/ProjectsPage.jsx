@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { Plus, Calendar, Folder, ArrowRight, Trash2, Edit, X, LayoutDashboard } from 'lucide-react';
 
-export default function ProjectsPage({ onSelectProject }) {
+export default function ProjectsPage({ onSelectProject, currentUser }) {
   const [projects, setProjects] = useState([]);
   const [projectStats, setProjectStats] = useState({});
   const [filter, setFilter] = useState('');
@@ -49,11 +49,17 @@ export default function ProjectsPage({ onSelectProject }) {
     setLoading(true);
     try {
       const data = await api.projects.getAll(filter);
-      setProjects(data);
+      
+      // Filtrer si membre simple
+      const filteredData = currentUser?.role === 'ADMIN'
+        ? data
+        : data.filter(p => p.members?.some(m => m.id === currentUser?.id));
+        
+      setProjects(filteredData);
       
       // Load stats for each project
       const statsMap = {};
-      for (const proj of data) {
+      for (const proj of filteredData) {
         try {
           const stats = await api.projects.getStats(proj.id);
           statsMap[proj.id] = stats;
@@ -156,9 +162,11 @@ export default function ProjectsPage({ onSelectProject }) {
           </h1>
           <p className="page-subtitle" style={{ fontSize: '1.05rem', marginTop: '0.5rem' }}>Gérez et suivez l'avancement de vos projets d'équipe.</p>
         </div>
-        <button className="btn btn-primary" onClick={handleOpenCreateModal} style={{ alignSelf: 'center', padding: '0.65rem 1.5rem' }}>
-          <Plus size={18} /> Nouveau Projet
-        </button>
+        {currentUser?.role === 'ADMIN' && (
+          <button className="btn btn-primary" onClick={handleOpenCreateModal} style={{ alignSelf: 'center', padding: '0.65rem 1.5rem' }}>
+            <Plus size={18} /> Nouveau Projet
+          </button>
+        )}
       </div>
 
       <div className="dashboard-filters" style={{ justifyContent: 'center', marginBottom: '3rem' }}>
@@ -261,22 +269,24 @@ export default function ProjectsPage({ onSelectProject }) {
                     )}
                   </div>
 
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button 
-                      className="btn btn-secondary btn-icon" 
-                      onClick={(e) => handleOpenEditModal(e, project)}
-                      title="Modifier le projet"
-                    >
-                      <Edit size={14} />
-                    </button>
-                    <button 
-                      className="btn btn-danger btn-icon" 
-                      onClick={(e) => handleDeleteProject(e, project.id)}
-                      title="Supprimer le projet"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
+                  {currentUser?.role === 'ADMIN' && (
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button 
+                        className="btn btn-secondary btn-icon" 
+                        onClick={(e) => handleOpenEditModal(e, project)}
+                        title="Modifier le projet"
+                      >
+                        <Edit size={14} />
+                      </button>
+                      <button 
+                        className="btn btn-danger btn-icon" 
+                        onClick={(e) => handleDeleteProject(e, project.id)}
+                        title="Supprimer le projet"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             );

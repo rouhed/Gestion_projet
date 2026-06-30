@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
-import { Play, CheckCircle2, ListTodo, Plus, Users, UserPlus, UserMinus, Clock, Calendar, ArrowLeft, X } from 'lucide-react';
+import { Play, CheckCircle2, ListTodo, Plus, Users, UserPlus, UserMinus, Clock, Calendar, ArrowLeft, X, Lock } from 'lucide-react';
 import TaskDetailModal from '../components/TaskDetailModal';
 
 const formatLoggedHours = (hours) => {
@@ -15,7 +15,7 @@ const formatLoggedHours = (hours) => {
   }
 };
 
-export default function ProjectDetailPage({ projectId, onBack }) {
+export default function ProjectDetailPage({ projectId, onBack, currentUser }) {
   const [project, setProject] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [stats, setStats] = useState(null);
@@ -45,6 +45,97 @@ export default function ProjectDetailPage({ projectId, onBack }) {
     estimatedHours: 0,
     assigneeId: ''
   });
+
+  // Live Timer states for Kanban
+  const [runningTaskId, setRunningTaskId] = useState(() => localStorage.getItem('running_task_id'));
+  const [timerSeconds, setTimerSeconds] = useState(0);
+
+  // Sync timer in real time
+  useEffect(() => {
+    let interval = null;
+    const checkTimer = () => {
+      const runningId = localStorage.getItem('running_task_id');
+      setRunningTaskId(runningId);
+      if (runningId) {
+        const start = localStorage.getItem('timer_start_time');
+        if (start) {
+          setTimerSeconds(Math.floor((Date.now() - parseInt(start)) / 1000));
+        }
+      } else {
+        setTimerSeconds(0);
+      }
+    };
+
+    checkTimer();
+    
+    interval = setInterval(() => {
+      const runningId = localStorage.getItem('running_task_id');
+      if (runningId) {
+        const start = localStorage.getItem('timer_start_time');
+        if (start) {
+          setTimerSeconds(Math.floor((Date.now() - parseInt(start)) / 1000));
+        }
+      }
+    }, 1000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [isTaskModalOpen]);
+
+  const handleStartTaskTimer = async (e, task) => {
+    e.stopPropagation();
+    localStorage.setItem('running_task_id', task.id.toString());
+    localStorage.setItem('timer_start_time', Date.now().toString());
+    setRunningTaskId(task.id.toString());
+    setTimerSeconds(0);
+
+    if (task.status === 'TODO') {
+      try {
+        await api.tasks.changeStatus(task.id, 'IN_PROGRESS');
+        reloadTasksAndStats();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
+
+  const handleStopTaskTimer = async (e, task) => {
+    e.stopPropagation();
+    const startTime = localStorage.getItem('timer_start_time');
+    const elapsed = Math.floor((Date.now() - parseInt(startTime)) / 1000);
+
+    localStorage.removeItem('running_task_id');
+    localStorage.removeItem('timer_start_time');
+    setRunningTaskId(null);
+    setTimerSeconds(0);
+
+    if (elapsed > 0) {
+      const hoursTracked = parseFloat((elapsed / 3600).toFixed(2));
+      const hoursToLog = Math.max(0.01, hoursTracked);
+
+      setCustomConfirm({
+        isOpen: true,
+        title: 'Enregistrer le temps',
+        message: `Vous avez chronométré ${formatLoggedHours(hoursToLog)}. Souhaitez-vous enregistrer ce temps sur cette tâche ?`,
+        onConfirm: async () => {
+          try {
+            await api.tasks.addHours(task.id, hoursToLog);
+            reloadTasksAndStats();
+          } catch (err) {
+            setCustomAlert({ isOpen: true, title: 'Erreur', message: err.message });
+          }
+        }
+      });
+    }
+  };
+
+  const formatTimerTime = (totalSecs) => {
+    const hrs = Math.floor(totalSecs / 3600);
+    const mins = Math.floor((totalSecs % 3600) / 60);
+    const secs = totalSecs % 60;
+    return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const triggerCelebration = () => {
     const canvas = canvasRef.current;
@@ -184,13 +275,14 @@ export default function ProjectDetailPage({ projectId, onBack }) {
       setProject(updatedProj);
       setSelectedMemberToAdd('');
       setIsAddMemberMode(false);
-      loadAllData(); // Recharger pour rafraîchir les listes
+      loadAllData();
     } catch (err) {
       setCustomAlert({ isOpen: true, title: 'Erreur', message: err.message });
     }
   };
 
   const handleRemoveMember = (memberId) => {
+    if (currentUser?.role !== 'ADMIN') return;
     setCustomConfirm({
       isOpen: true,
       title: 'Retirer le membre',
@@ -207,7 +299,6 @@ export default function ProjectDetailPage({ projectId, onBack }) {
     });
   };
 
-  // Filtre les membres globaux pour n'afficher que ceux qui ne sont pas déjà dans le projet
   const getNonProjectMembers = () => {
     if (!project || !globalMembers) return [];
     const projectMemberIds = new Set(project.members.map(m => m.id));
@@ -216,8 +307,16 @@ export default function ProjectDetailPage({ projectId, onBack }) {
 
   // --- GESTION DRAG AND DROP KANBAN ---
 
-  const handleDragStart = (e, taskId) => {
-    e.dataTransfer.setData('text/plain', taskId.toString());
+  const handleDragStart = (e, task) => {
+    // Les membres ne peuvent déplacer que leurs propres tâches non terminées
+    const isMyTask = task.assignee?.id === currentUser?.id;
+    const isUserAdmin = currentUser?.role === 'ADMIN';
+    const isTaskDone = task.status === 'DONE';
+    if (!isUserAdmin && (!isMyTask || isTaskDone)) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer.setData('text/plain', task.id.toString());
     e.currentTarget.classList.add('dragging');
   };
 
@@ -237,7 +336,15 @@ export default function ProjectDetailPage({ projectId, onBack }) {
     
     // Récupérer la tâche et son statut d'origine
     const draggedTask = tasks.find(t => t.id === taskId);
-    const sourceStatus = draggedTask ? draggedTask.status : '';
+    if (!draggedTask) return;
+
+    // Double vérification de sécurité côté client
+    const isMyTask = draggedTask.assignee?.id === currentUser?.id;
+    const isUserAdmin = currentUser?.role === 'ADMIN';
+    const isTaskDone = draggedTask.status === 'DONE';
+    if (!isUserAdmin && (!isMyTask || isTaskDone)) return;
+
+    const sourceStatus = draggedTask.status;
     
     // Optimistic UI update
     const previousTasks = [...tasks];
@@ -248,13 +355,15 @@ export default function ProjectDetailPage({ projectId, onBack }) {
       
       if (targetStatus === 'DONE') {
         triggerCelebration();
-        // Arrêter le minuteur si actif pour cette tâche et enregistrer le temps en heures décimales
-        const runningTaskId = localStorage.getItem('running_task_id');
-        if (runningTaskId === taskId.toString()) {
+        // Arrêter le minuteur si actif pour cette tâche
+        const runningId = localStorage.getItem('running_task_id');
+        if (runningId === taskId.toString()) {
           const startTime = parseInt(localStorage.getItem('timer_start_time'));
           const elapsed = Math.floor((Date.now() - startTime) / 1000);
           localStorage.removeItem('running_task_id');
           localStorage.removeItem('timer_start_time');
+          setRunningTaskId(null);
+          setTimerSeconds(0);
           
           if (elapsed > 0) {
             const hoursTracked = parseFloat((elapsed / 3600).toFixed(2));
@@ -266,25 +375,30 @@ export default function ProjectDetailPage({ projectId, onBack }) {
         // Lancement automatique du minuteur lors du passage à "En cours"
         localStorage.setItem('running_task_id', taskId.toString());
         localStorage.setItem('timer_start_time', Date.now().toString());
+        setRunningTaskId(taskId.toString());
+        setTimerSeconds(0);
       } else {
-        // Si déplacé vers un autre état, on arrête le minuteur s'il tournait sur cette tâche
-        const runningTaskId = localStorage.getItem('running_task_id');
-        if (runningTaskId === taskId.toString()) {
+        // Si déplacé vers un autre état, on arrête le minuteur
+        const runningId = localStorage.getItem('running_task_id');
+        if (runningId === taskId.toString()) {
           localStorage.removeItem('running_task_id');
           localStorage.removeItem('timer_start_time');
+          setRunningTaskId(null);
+          setTimerSeconds(0);
         }
       }
       
       reloadTasksAndStats();
     } catch (err) {
       setCustomAlert({ isOpen: true, title: 'Erreur', message: err.message });
-      setTasks(previousTasks); // Rollback en cas d'erreur
+      setTasks(previousTasks);
     }
   };
 
   // --- CREATION DE TACHE ---
 
   const handleOpenCreateTaskModal = () => {
+    if (currentUser?.role !== 'ADMIN') return;
     setTaskFormData({
       title: '',
       description: '',
@@ -353,7 +467,6 @@ export default function ProjectDetailPage({ projectId, onBack }) {
     );
   }
 
-  // Filtrer les tâches par colonnes
   const todoTasks = tasks.filter(t => t.status === 'TODO');
   const inProgressTasks = tasks.filter(t => t.status === 'IN_PROGRESS');
   const doneTasks = tasks.filter(t => t.status === 'DONE');
@@ -406,9 +519,11 @@ export default function ProjectDetailPage({ projectId, onBack }) {
                 </button>
               </div>
             </div>
-            <button className="btn btn-primary" style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }} onClick={handleOpenCreateTaskModal}>
-              <Plus size={16} /> Nouvelle Tâche
-            </button>
+            {currentUser?.role === 'ADMIN' && (
+              <button className="btn btn-primary" style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }} onClick={handleOpenCreateTaskModal}>
+                <Plus size={16} /> Nouvelle Tâche
+              </button>
+            )}
           </div>
 
           {viewMode === 'gantt' ? (
@@ -424,14 +539,19 @@ export default function ProjectDetailPage({ projectId, onBack }) {
               <div style={{ display: 'flex', flexDirection: 'column' }}>
                 {tasks.map((task, idx) => {
                   const { start, duration } = getGanttTaskPosition(task, idx);
+                  const isMyTask = task.assignee?.id === currentUser?.id;
+                  const isUserAdmin = currentUser?.role === 'ADMIN';
+                  const canInteract = isUserAdmin || (isMyTask && task.status !== 'DONE');
+
                   return (
-                    <div key={task.id} className="gantt-row">
+                    <div key={task.id} className="gantt-row" style={{ opacity: canInteract ? 1 : 0.6 }}>
                       <div 
                         className="gantt-task-name" 
-                        onClick={() => { setSelectedTaskId(task.id); setIsTaskModalOpen(true); }} 
-                        style={{ cursor: 'pointer' }}
+                        onClick={() => { if (canInteract) { setSelectedTaskId(task.id); setIsTaskModalOpen(true); } }} 
+                        style={{ cursor: canInteract ? 'pointer' : 'default' }}
                         title={task.title}
                       >
+                        {!canInteract && <Lock size={10} style={{ marginRight: '4px', display: 'inline' }} />}
                         {task.title}
                       </div>
                       <div className="gantt-bar-track">
@@ -441,9 +561,10 @@ export default function ProjectDetailPage({ projectId, onBack }) {
                             gridColumnStart: start,
                             gridColumnEnd: `span ${duration}`,
                             '--start': start,
-                            '--duration': duration
+                            '--duration': duration,
+                            cursor: canInteract ? 'pointer' : 'default'
                           }}
-                          onClick={() => { setSelectedTaskId(task.id); setIsTaskModalOpen(true); }}
+                          onClick={() => { if (canInteract) { setSelectedTaskId(task.id); setIsTaskModalOpen(true); } }}
                           title={`${task.title} - ${task.loggedHours}/${task.estimatedHours}h (${task.priority})`}
                         >
                           {task.assignee ? `${task.assignee.firstName.charAt(0)}${task.assignee.lastName.charAt(0)}` : ''} ({task.estimatedHours}h)
@@ -461,161 +582,140 @@ export default function ProjectDetailPage({ projectId, onBack }) {
             </div>
           ) : (
             <div className="kanban-board">
-              {/* Colonne A FAIRE */}
-              <div 
-                className={`kanban-column ${activeDragColumn === 'TODO' ? 'drag-hover-column' : ''}`}
-                onDragOver={handleDragOver}
-                onDragEnter={() => setActiveDragColumn('TODO')}
-                onDragLeave={() => setActiveDragColumn(null)}
-                onDrop={(e) => { handleDrop(e, 'TODO'); setActiveDragColumn(null); }}
-              >
-                <div className="kanban-column-header">
-                  <span className="kanban-column-title" style={{ color: 'var(--text-secondary)' }}>
-                    <ListTodo size={16} /> À faire
-                  </span>
-                  <span className="kanban-column-count">{todoTasks.length}</span>
-                </div>
-                <div className="kanban-tasks-list">
-                  {todoTasks.map(task => (
-                    <div 
-                      key={task.id} 
-                      className="task-card tilt-card"
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, task.id)}
-                      onDragEnd={handleDragEnd}
-                      onMouseMove={handleCardMouseMove}
-                      onMouseLeave={handleCardMouseLeave}
-                      onClick={() => { setSelectedTaskId(task.id); setIsTaskModalOpen(true); }}
-                    >
-                      <div className="task-card-header">
-                        <span className={`badge ${getPriorityBadgeClass(task.priority)}`}>
-                          {getPriorityLabel(task.priority)}
-                        </span>
-                      </div>
-                      <div className="task-title">{task.title}</div>
-                      <div className="task-description">{task.description}</div>
-                      
-                      <div className="task-card-footer">
-                        <div className="task-hours">
-                          <Clock size={12} />
-                          <span>{formatLoggedHours(task.loggedHours)} / {task.estimatedHours}h</span>
-                        </div>
-                        {task.assignee ? (
-                          <div className="member-avatar" style={{ margin: 0 }} title={`Assigné à : ${task.assignee.firstName}`}>
-                            {task.assignee.firstName.charAt(0)}{task.assignee.lastName.charAt(0)}
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Non assignée</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              {/* Colonne A FAIRE, EN COURS, TERMINE */}
+              {['TODO', 'IN_PROGRESS', 'DONE'].map(colStatus => {
+                let colTasks = [];
+                let colTitle = '';
+                let colColor = '';
+                let colIcon = null;
 
-              {/* Colonne EN COURS */}
-              <div 
-                className={`kanban-column ${activeDragColumn === 'IN_PROGRESS' ? 'drag-hover-column' : ''}`}
-                onDragOver={handleDragOver}
-                onDragEnter={() => setActiveDragColumn('IN_PROGRESS')}
-                onDragLeave={() => setActiveDragColumn(null)}
-                onDrop={(e) => { handleDrop(e, 'IN_PROGRESS'); setActiveDragColumn(null); }}
-              >
-                <div className="kanban-column-header">
-                  <span className="kanban-column-title" style={{ color: 'var(--color-progress)' }}>
-                    <Play size={16} /> En cours
-                  </span>
-                  <span className="kanban-column-count">{inProgressTasks.length}</span>
-                </div>
-                <div className="kanban-tasks-list">
-                  {inProgressTasks.map(task => (
-                    <div 
-                      key={task.id} 
-                      className="task-card tilt-card"
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, task.id)}
-                      onDragEnd={handleDragEnd}
-                      onMouseMove={handleCardMouseMove}
-                      onMouseLeave={handleCardMouseLeave}
-                      onClick={() => { setSelectedTaskId(task.id); setIsTaskModalOpen(true); }}
-                    >
-                      <div className="task-card-header">
-                        <span className={`badge ${getPriorityBadgeClass(task.priority)}`}>
-                          {getPriorityLabel(task.priority)}
-                        </span>
-                      </div>
-                      <div className="task-title">{task.title}</div>
-                      <div className="task-description">{task.description}</div>
-                      
-                      <div className="task-card-footer">
-                        <div className="task-hours">
-                          <Clock size={12} />
-                          <span>{formatLoggedHours(task.loggedHours)} / {task.estimatedHours}h</span>
-                        </div>
-                        {task.assignee ? (
-                          <div className="member-avatar" style={{ margin: 0 }} title={`Assigné à : ${task.assignee.firstName}`}>
-                            {task.assignee.firstName.charAt(0)}{task.assignee.lastName.charAt(0)}
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Non assignée</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+                if (colStatus === 'TODO') {
+                  colTasks = todoTasks;
+                  colTitle = 'À faire';
+                  colColor = 'var(--text-secondary)';
+                  colIcon = <ListTodo size={16} />;
+                } else if (colStatus === 'IN_PROGRESS') {
+                  colTasks = inProgressTasks;
+                  colTitle = 'En cours';
+                  colColor = 'var(--color-progress)';
+                  colIcon = <Play size={16} />;
+                } else {
+                  colTasks = doneTasks;
+                  colTitle = 'Terminé';
+                  colColor = 'var(--color-done)';
+                  colIcon = <CheckCircle2 size={16} />;
+                }
 
-              {/* Colonne TERMINE */}
-              <div 
-                className={`kanban-column ${activeDragColumn === 'DONE' ? 'drag-hover-column' : ''}`}
-                onDragOver={handleDragOver}
-                onDragEnter={() => setActiveDragColumn('DONE')}
-                onDragLeave={() => setActiveDragColumn(null)}
-                onDrop={(e) => { handleDrop(e, 'DONE'); setActiveDragColumn(null); }}
-              >
-                <div className="kanban-column-header">
-                  <span className="kanban-column-title" style={{ color: 'var(--color-done)' }}>
-                    <CheckCircle2 size={16} /> Terminé
-                  </span>
-                  <span className="kanban-column-count">{doneTasks.length}</span>
-                </div>
-                <div className="kanban-tasks-list">
-                  {doneTasks.map(task => (
-                    <div 
-                      key={task.id} 
-                      className="task-card tilt-card"
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, task.id)}
-                      onDragEnd={handleDragEnd}
-                      onMouseMove={handleCardMouseMove}
-                      onMouseLeave={handleCardMouseLeave}
-                      onClick={() => { setSelectedTaskId(task.id); setIsTaskModalOpen(true); }}
-                    >
-                      <div className="task-card-header">
-                        <span className={`badge ${getPriorityBadgeClass(task.priority)}`}>
-                          {getPriorityLabel(task.priority)}
-                        </span>
-                      </div>
-                      <div className="task-title" style={{ textDecoration: 'line-through', opacity: 0.65 }}>{task.title}</div>
-                      <div className="task-description" style={{ opacity: 0.5 }}>{task.description}</div>
-                      
-                      <div className="task-card-footer">
-                        <div className="task-hours">
-                          <Clock size={12} />
-                          <span>{formatLoggedHours(task.loggedHours)} / {task.estimatedHours}h</span>
-                        </div>
-                        {task.assignee ? (
-                          <div className="member-avatar" style={{ margin: 0 }} title={`Assigné à : ${task.assignee.firstName}`}>
-                            {task.assignee.firstName.charAt(0)}{task.assignee.lastName.charAt(0)}
-                          </div>
-                        ) : (
-                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Non assignée</span>
-                        )}
-                      </div>
+                return (
+                  <div 
+                    key={colStatus}
+                    className={`kanban-column ${activeDragColumn === colStatus ? 'drag-hover-column' : ''}`}
+                    onDragOver={handleDragOver}
+                    onDragEnter={() => setActiveDragColumn(colStatus)}
+                    onDragLeave={() => setActiveDragColumn(null)}
+                    onDrop={(e) => { handleDrop(e, colStatus); setActiveDragColumn(null); }}
+                  >
+                    <div className="kanban-column-header">
+                      <span className="kanban-column-title" style={{ color: colColor }}>
+                        {colIcon} {colTitle}
+                      </span>
+                      <span className="kanban-column-count">{colTasks.length}</span>
                     </div>
-                  ))}
-                </div>
-              </div>
+                    <div className="kanban-tasks-list">
+                      {colTasks.map(task => {
+                        const isMyTask = task.assignee?.id === currentUser?.id;
+                        const isUserAdmin = currentUser?.role === 'ADMIN';
+                        const canInteract = isUserAdmin || (isMyTask && task.status !== 'DONE');
+                        const isTimerActive = runningTaskId === task.id.toString();
+
+                        return (
+                          <div 
+                            key={task.id} 
+                            className="task-card tilt-card"
+                            draggable={canInteract}
+                            onDragStart={(e) => handleDragStart(e, task)}
+                            onDragEnd={handleDragEnd}
+                            onMouseMove={handleCardMouseMove}
+                            onMouseLeave={handleCardMouseLeave}
+                            onClick={() => { if (canInteract) { setSelectedTaskId(task.id); setIsTaskModalOpen(true); } }}
+                            style={{ 
+                              cursor: canInteract ? 'pointer' : 'default', 
+                              opacity: canInteract ? 1 : 0.55,
+                              border: isTimerActive ? '2px solid #ef4444' : '1px solid var(--border-glass)'
+                            }}
+                          >
+                            <div className="task-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span className={`badge ${getPriorityBadgeClass(task.priority)}`}>
+                                {getPriorityLabel(task.priority)}
+                              </span>
+                              
+                              {/* Raccourci Minuteur interactif pour l'assigné */}
+                              {isMyTask && task.status !== 'DONE' && (
+                                <div style={{ display: 'flex', alignItems: 'center' }}>
+                                  {isTimerActive ? (
+                                    <button 
+                                      onClick={(e) => handleStopTaskTimer(e, task)} 
+                                      className="btn btn-danger"
+                                      style={{ 
+                                        padding: '0.15rem 0.4rem', 
+                                        fontSize: '0.65rem', 
+                                        borderRadius: '50px', 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        gap: '0.15rem',
+                                        animation: 'pulse 1.5s infinite',
+                                        fontWeight: 'bold' 
+                                      }}
+                                      title="Arrêter et enregistrer"
+                                    >
+                                      <Clock size={10} />
+                                      <span>{formatTimerTime(timerSeconds)}</span>
+                                    </button>
+                                  ) : (
+                                    <button 
+                                      onClick={(e) => handleStartTaskTimer(e, task)} 
+                                      className="btn btn-primary"
+                                      style={{ padding: '0.15rem', borderRadius: '50%' }}
+                                      title="Démarrer le chronomètre"
+                                    >
+                                      <Play size={10} fill="currentColor" />
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+
+                              {!canInteract && (
+                                <div style={{ display: 'flex', alignItems: 'center', color: 'var(--text-muted)' }} title="Lecture seule">
+                                  <Lock size={12} />
+                                </div>
+                              )}
+                            </div>
+                            
+                            <div className="task-title" style={{ textDecoration: task.status === 'DONE' ? 'line-through' : 'none' }}>
+                              {task.title}
+                            </div>
+                            <div className="task-description">{task.description}</div>
+                            
+                            <div className="task-card-footer">
+                              <div className="task-hours">
+                                <Clock size={12} />
+                                <span>{formatLoggedHours(task.loggedHours)} / {task.estimatedHours}h</span>
+                              </div>
+                              {task.assignee ? (
+                                <div className="member-avatar" style={{ margin: 0 }} title={`Assigné à : ${task.assignee.firstName}`}>
+                                  {task.assignee.firstName.charAt(0)}{task.assignee.lastName.charAt(0)}
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Non assignée</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -629,7 +729,6 @@ export default function ProjectDetailPage({ projectId, onBack }) {
                 Statistiques du Projet
               </h3>
               
-              {/* Cercle d'avancement / Barre progress dynamique */}
               <div style={{ margin: '0.5rem 0' }}>
                 <div className="progress-bar-container" style={{ height: '10px' }}>
                   <div className="progress-bar-fill" style={{ width: `${stats.completionPercentage}%` }}></div>
@@ -660,7 +759,7 @@ export default function ProjectDetailPage({ projectId, onBack }) {
           )}
 
           {/* Panel Charge de Travail (Workload) */}
-          <div className="glass-panel" style={{ marginTop: '0px' }}>
+          <div className="glass-panel">
             <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.1rem', fontWeight: 700, borderBottom: '1px solid var(--border-glass)', paddingBottom: '0.5rem', marginBottom: '1rem' }}>
               Charge de l'Équipe (Semaine)
             </h3>
@@ -704,16 +803,18 @@ export default function ProjectDetailPage({ projectId, onBack }) {
               <h3 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.1rem', fontWeight: 700 }}>
                 Membres ({project.members ? project.members.length : 0})
               </h3>
-              <button 
-                style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer' }}
-                onClick={() => setIsAddMemberMode(!isAddMemberMode)}
-                title="Associer un membre"
-              >
-                <UserPlus size={16} />
-              </button>
+              {currentUser?.role === 'ADMIN' && (
+                <button 
+                  style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer' }}
+                  onClick={() => setIsAddMemberMode(!isAddMemberMode)}
+                  title="Associer un membre"
+                >
+                  <UserPlus size={16} />
+                </button>
+              )}
             </div>
 
-            {isAddMemberMode && (
+            {isAddMemberMode && currentUser?.role === 'ADMIN' && (
               <form onSubmit={handleAddMember} style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
                 <select 
                   className="form-control" 
@@ -745,13 +846,15 @@ export default function ProjectDetailPage({ projectId, onBack }) {
                       <div className="member-role">{member.role}</div>
                     </div>
                   </div>
-                  <button 
-                    className="btn-remove-member" 
-                    onClick={() => handleRemoveMember(member.id)}
-                    title="Retirer du projet"
-                  >
-                    <UserMinus size={14} />
-                  </button>
+                  {currentUser?.role === 'ADMIN' && (
+                    <button 
+                      className="btn-remove-member" 
+                      onClick={() => handleRemoveMember(member.id)}
+                      title="Retirer du projet"
+                    >
+                      <UserMinus size={14} />
+                    </button>
+                  )}
                 </div>
               ))}
               {(!project.members || project.members.length === 0) && (
@@ -771,11 +874,12 @@ export default function ProjectDetailPage({ projectId, onBack }) {
           projectMembers={project ? project.members : []}
           onClose={() => { setSelectedTaskId(null); setIsTaskModalOpen(false); }}
           onTaskUpdated={reloadTasksAndStats}
+          currentUser={currentUser}
         />
       )}
 
       {/* MODALE CREATION DE TACHE */}
-      {isCreateTaskModalOpen && (
+      {isCreateTaskModalOpen && currentUser?.role === 'ADMIN' && (
         <div className="modal-overlay" onClick={() => setIsCreateTaskModalOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">

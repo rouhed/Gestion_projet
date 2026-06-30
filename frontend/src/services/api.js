@@ -18,6 +18,15 @@ const handleResponse = async (response) => {
 };
 
 export const api = {
+  // === AUTHENTIFICATION ===
+  auth: {
+    login: (email, password) => fetch(`${API_BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    }).then(handleResponse),
+  },
+
   // === PROJETS ===
   projects: {
     getAll: (status) => {

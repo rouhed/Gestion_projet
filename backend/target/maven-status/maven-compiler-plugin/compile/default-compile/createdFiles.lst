@@ -4,6 +4,7 @@ com\projet\gestiontaches\dto\ProjectDTO$ProjectDTOBuilder.class
 com\projet\gestiontaches\dto\ProjectStatsDTO$ProjectStatsDTOBuilder.class
 com\projet\gestiontaches\entity\Task$TaskBuilder.class
 com\projet\gestiontaches\GestiontachesApplication.class
+com\projet\gestiontaches\dto\LoginRequest.class
 com\projet\gestiontaches\controller\TaskController.class
 com\projet\gestiontaches\repository\ProjectRepository.class
 com\projet\gestiontaches\entity\Task.class
@@ -13,7 +14,9 @@ com\projet\gestiontaches\dto\CommentDTO$CommentDTOBuilder.class
 com\projet\gestiontaches\service\MemberService.class
 com\projet\gestiontaches\dto\TaskDTO.class
 com\projet\gestiontaches\entity\Comment.class
+com\projet\gestiontaches\controller\AuthController.class
 com\projet\gestiontaches\controller\CommentController.class
+com\projet\gestiontaches\dto\AuthResponse$AuthResponseBuilder.class
 com\projet\gestiontaches\dto\MemberDTO.class
 com\projet\gestiontaches\controller\MemberController.class
 com\projet\gestiontaches\repository\MemberRepository.class
@@ -25,6 +28,7 @@ com\projet\gestiontaches\service\TaskService.class
 com\projet\gestiontaches\dto\ProjectStatsDTO.class
 com\projet\gestiontaches\dto\TaskDTO$TaskDTOBuilder.class
 com\projet\gestiontaches\dto\CommentDTO.class
+com\projet\gestiontaches\dto\AuthResponse.class
 com\projet\gestiontaches\service\CommentService.class
 com\projet\gestiontaches\entity\Comment$CommentBuilder.class
 com\projet\gestiontaches\entity\Member$MemberBuilder.class

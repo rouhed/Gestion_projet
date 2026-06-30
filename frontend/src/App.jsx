@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import ProjectsPage from './pages/ProjectsPage';
 import ProjectDetailPage from './pages/ProjectDetailPage';
 import MembersPage from './pages/MembersPage';
+import LoginPage from './pages/LoginPage';
 import { api } from './services/api';
-import { Briefcase, Users, Moon, Sun, Search, X, Folder, ListTodo } from 'lucide-react';
+import { Briefcase, Users, Moon, Sun, Search, X, Folder, ListTodo, LogOut } from 'lucide-react';
 import TaskDetailModal from './components/TaskDetailModal';
 import logoImg from './assets/logo.png';
 
@@ -20,8 +21,19 @@ export default function App() {
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [searchProjectMembers, setSearchProjectMembers] = useState([]);
   const [selectedSearchTaskId, setSelectedSearchTaskId] = useState(null);
+  
   const [isSplashLoading, setIsSplashLoading] = useState(true);
   const [splashPercent, setSplashPercent] = useState(0);
+
+  // Authenticated user state
+  const [currentUser, setCurrentUser] = useState(() => {
+    const savedUser = localStorage.getItem('current_user');
+    return savedUser ? JSON.parse(savedUser) : null;
+  });
+
+  // States for animated logout confirmation
+  const [isLogoutConfirmOpen, setIsLogoutConfirmOpen] = useState(false);
+  const [logoutProgress, setLogoutProgress] = useState(100);
 
   // Splash Screen Loading Simulation
   useEffect(() => {
@@ -46,6 +58,34 @@ export default function App() {
     }
   }, [isLightMode]);
 
+  // Décompte de déconnexion avec barre de régression
+  useEffect(() => {
+    let interval = null;
+    if (isLogoutConfirmOpen) {
+      setLogoutProgress(100);
+      const startTime = Date.now();
+      const duration = 5000; // 5 secondes
+      
+      interval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const remaining = Math.max(0, duration - elapsed);
+        const percentage = (remaining / duration) * 100;
+        
+        setLogoutProgress(percentage);
+        
+        if (remaining <= 0) {
+          clearInterval(interval);
+          handleLogout();
+          setIsLogoutConfirmOpen(false);
+        }
+      }, 50); // Fluidité de 50ms
+    }
+    
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isLogoutConfirmOpen]);
+
   // Effectuer la recherche à chaque frappe
   useEffect(() => {
     const delayDebounceFn = setTimeout(() => {
@@ -64,16 +104,29 @@ export default function App() {
       // 1. Rechercher les tâches
       const tasksData = await api.tasks.searchGlobal(searchQuery);
       
-      // 2. Rechercher les projets (filtre côté client pour simplifier, ou charger tous les projets et filtrer)
+      // 2. Rechercher les projets
       const allProjects = await api.projects.getAll();
       const filteredProjects = allProjects.filter(p => 
         p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (p.description && p.description.toLowerCase().includes(searchQuery.toLowerCase()))
       );
 
+      // Si le rôle est MEMBER, filtrer les résultats de recherche
+      const allowedProjects = currentUser?.role === 'ADMIN'
+        ? filteredProjects
+        : filteredProjects.filter(p => p.members?.some(m => m.id === currentUser?.id));
+
+      const allowedTasks = currentUser?.role === 'ADMIN'
+        ? tasksData
+        : tasksData.filter(t => {
+            // Trouver si le projet associé appartient au membre
+            const proj = allProjects.find(p => p.id === t.projectId);
+            return proj?.members?.some(m => m.id === currentUser?.id);
+          });
+
       setSearchResults({
-        projects: filteredProjects,
-        tasks: tasksData
+        projects: allowedProjects,
+        tasks: allowedTasks
       });
     } catch (err) {
       console.error('Erreur recherche globale', err);
@@ -88,6 +141,13 @@ export default function App() {
       setActiveProjectId(item.id);
       setView('project-detail');
     } else if (type === 'task') {
+      // Pour les membres simples : vérifier si la tâche leur est assignée
+      // Le client dit : "il ne peut pas cliquer pour les autres, mais seulement le sien pour voir"
+      // Donc, si c'est un membre et que la tâche ne lui est pas assignée, on ne lui permet pas d'ouvrir la modale
+      if (currentUser?.role === 'MEMBER' && item.assigneeId !== currentUser?.id) {
+        return; // Ne rien faire ou ignorer
+      }
+
       setActiveProjectId(item.projectId);
       setView('project-detail');
       
@@ -100,6 +160,37 @@ export default function App() {
         console.error(e);
       }
     }
+  };
+
+  const handleLoginSuccess = (userData) => {
+    setCurrentUser(userData);
+    localStorage.setItem('current_user', JSON.stringify(userData));
+  };
+
+  const handleLogout = async () => {
+    const runningTaskId = localStorage.getItem('running_task_id');
+    const timerStartTime = localStorage.getItem('timer_start_time');
+    
+    if (runningTaskId && timerStartTime) {
+      const startTime = parseInt(timerStartTime);
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      if (elapsed > 0) {
+        try {
+          const hoursTracked = parseFloat((elapsed / 3600).toFixed(2));
+          const hoursToLog = Math.max(0.01, hoursTracked);
+          await api.tasks.addHours(parseInt(runningTaskId), hoursToLog);
+        } catch (err) {
+          console.error("Erreur d'enregistrement automatique du temps au logout", err);
+        }
+      }
+    }
+
+    setCurrentUser(null);
+    localStorage.removeItem('current_user');
+    localStorage.removeItem('running_task_id');
+    localStorage.removeItem('timer_start_time');
+    setView('projects');
+    setActiveProjectId(null);
   };
 
   if (isSplashLoading) {
@@ -146,6 +237,11 @@ export default function App() {
     );
   }
 
+  // Si l'utilisateur n'est pas connecté, charger la page de connexion
+  if (!currentUser) {
+    return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <div className="app-container">
       {/* Bulles flottantes d'arrière-plan */}
@@ -175,7 +271,7 @@ export default function App() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => setIsSearchFocused(true)}
-                onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)} // Retard pour permettre le clic
+                onBlur={() => setTimeout(() => setIsSearchFocused(false), 200)}
               />
               
               {/* RÉSULTATS DE LA RECHERCHE EN FLOTTANT */}
@@ -257,6 +353,23 @@ export default function App() {
             >
               {isLightMode ? <Moon size={18} /> : <Sun size={18} />}
             </button>
+
+            {/* Profil Utilisateur Connecté & Déconnexion */}
+            <div className="user-profile-header" style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', padding: '0.25rem 0.65rem', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '50px', border: '1px solid var(--border-glass)' }}>
+              <div className="member-avatar" style={{ width: '28px', height: '28px', fontSize: '0.75rem', margin: 0 }} title={`${currentUser.firstName} ${currentUser.lastName} (${currentUser.role})`}>
+                {currentUser.firstName.charAt(0)}{currentUser.lastName.charAt(0)}
+              </div>
+              <span style={{ fontSize: '0.8rem', fontWeight: '800', color: 'var(--text-primary)' }}>
+                {currentUser.firstName} ({currentUser.role === 'ADMIN' ? 'Admin' : 'Membre'})
+              </span>
+              <button 
+                onClick={() => setIsLogoutConfirmOpen(true)} 
+                style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '0.15rem' }}
+                title="Se déconnecter"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -264,17 +377,21 @@ export default function App() {
       {/* CONTENU PRINCIPAL DE LA PAGE */}
       <main className="main-content">
         {view === 'projects' && (
-          <ProjectsPage onSelectProject={(id) => { setActiveProjectId(id); setView('project-detail'); }} />
+          <ProjectsPage 
+            onSelectProject={(id) => { setActiveProjectId(id); setView('project-detail'); }} 
+            currentUser={currentUser}
+          />
         )}
         
         {view === 'project-detail' && activeProjectId && (
           <ProjectDetailPage 
             projectId={activeProjectId} 
             onBack={() => { setView('projects'); setActiveProjectId(null); }} 
+            currentUser={currentUser}
           />
         )}
 
-        {view === 'members' && <MembersPage />}
+        {view === 'members' && currentUser?.role === 'ADMIN' && <MembersPage />}
       </main>
 
       {/* MODALE DE TACHE LANCEE DEPUIS LA RECHERCHE GLOBALE */}
@@ -284,6 +401,7 @@ export default function App() {
           projectMembers={searchProjectMembers}
           onClose={() => setSelectedSearchTaskId(null)}
           onTaskUpdated={() => {}}
+          currentUser={currentUser}
         />
       )}
 
@@ -296,14 +414,63 @@ export default function App() {
           <Briefcase className="dock-icon" />
           <span>Projets</span>
         </button>
-        <button 
-          className={`dock-item ${view === 'members' ? 'active' : ''}`}
-          onClick={() => { setView('members'); setActiveProjectId(null); }}
-        >
-          <Users className="dock-icon" />
-          <span>Membres</span>
-        </button>
+        {currentUser?.role === 'ADMIN' && (
+          <button 
+            className={`dock-item ${view === 'members' ? 'active' : ''}`}
+            onClick={() => { setView('members'); setActiveProjectId(null); }}
+          >
+            <Users className="dock-icon" />
+            <span>Membres</span>
+          </button>
+        )}
       </div>
+
+      {/* Modale de Confirmation de Déconnexion avec Barre de Régression */}
+      {isLogoutConfirmOpen && (
+        <div className="modal-overlay" style={{ zIndex: 12000 }} onClick={() => setIsLogoutConfirmOpen(false)}>
+          <div className="modal-content" style={{ maxWidth: '400px', textAlign: 'center', padding: '2rem' }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginBottom: '0.75rem', fontFamily: 'var(--font-heading)', fontSize: '1.25rem' }}>
+              Voulez-vous vous déconnecter ?
+            </h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
+              Déconnexion automatique dans {Math.ceil((logoutProgress / 100) * 5)}s...
+            </p>
+            
+            {/* Barre de régression */}
+            <div className="progress-bar-container" style={{ height: '6px', background: 'rgba(255, 255, 255, 0.05)', marginBottom: '2rem', overflow: 'hidden', borderRadius: '50px' }}>
+              <div 
+                className="progress-bar-fill" 
+                style={{ 
+                  width: `${logoutProgress}%`, 
+                  background: 'linear-gradient(90deg, #ef4444, #f87171)',
+                  transition: 'none',
+                  borderRadius: '50px'
+                }}
+              ></div>
+            </div>
+            
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+              <button 
+                className="btn btn-secondary" 
+                style={{ flex: 1, padding: '0.6rem 1rem' }}
+                onClick={() => setIsLogoutConfirmOpen(false)}
+              >
+                Annuler
+              </button>
+              <button 
+                className="btn btn-danger" 
+                style={{ flex: 1, padding: '0.6rem 1rem', background: '#ef4444' }}
+                onClick={() => {
+                  handleLogout();
+                  setIsLogoutConfirmOpen(false);
+                }}
+              >
+                Déconnecter
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

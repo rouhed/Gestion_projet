@@ -27,4 +27,13 @@ public class Member {
 
     @Column(nullable = false)
     private String role;
+
+    @Column(nullable = false)
+    @Builder.Default
+    private String password = "password123";
+
+    public String getPassword() {
+        return password == null ? "password123" : password;
+    }
 }
+
