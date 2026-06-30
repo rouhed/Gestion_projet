@@ -1,0 +1,100 @@
+ESSGAM – L3 GL
+Examen de : Langage JAVA 2 – PROJET
+JUIN 2026
+
+----------------------------------------------------------------------------------------------------------------
+
+CONTEXTE
+
+Vous êtes développeur au sein d'une équipe agile chargée de réaliser une application web de gestion de projets et de tâches. Cette application permettra à une équipe de collaborer autour de projets, d'assigner des tâches aux membres et de suivre l'avancement.
+
+L'architecture de l'application est de type client-serveur :
+
+- Le backend sera développé en Spring Boot (Java) et exposera une API REST.
+- Le frontend sera développé avec le framework de votre choix : React, Vue.js ou Angular (vous devez choisir un seul).
+
+L'application devra être fonctionnelle, bien architecturée et conforme aux bonnes pratiques du génie logiciel.
+
+FONCTIONNALITES ATTENDUES
+
+Backend (API REST) – Spring Boot
+
+Gestion des Projets
+- Créer un nouveau projet (POST /api/projects)
+- Lister tous les projets (GET /api/projects)
+- Récupérer un projet par son id (GET /api/projects/{id})
+- Modifier un projet existant (PUT /api/projects/{id})
+- Supprimer un projet (DELETE /api/projects/{id})
+- Changer le statut d'un projet (PATCH /api/projects/{id}/status)
+
+Gestion des Tâches
+- Créer une tâche associée à un projet (POST /api/projects/{projectId}/tasks)
+- Lister toutes les tâches d'un projet (GET /api/projects/{projectId}/tasks)
+- Récupérer une tâche par son id (GET /api/tasks/{id})
+- Modifier une tâche (PUT /api/tasks/{id})
+- Supprimer une tâche (DELETE /api/tasks/{id})
+- Changer le statut d'une tâche (PATCH /api/tasks/{id}/status)
+- Assigner un membre à une tâche (PATCH /api/tasks/{id}/assign/{memberId})
+- Ajouter des heures réalisées à une tâche (PATCH /api/tasks/{id}/hours)
+
+Gestion des Membres
+- Créer un membre (POST /api/members)
+- Lister tous les membres (GET /api/members)
+- Récupérer un membre par son id (GET /api/members/{id})
+- Modifier un membre (PUT /api/members/{id})
+- Supprimer un membre (DELETE /api/members/{id})
+- Ajouter un membre à un projet (POST /api/projects/{projectId}/members/{memberId})
+- Retirer un membre d'un projet (DELETE /api/projects/{projectId}/members/{memberId})
+
+Gestion des Commentaires
+- Ajouter un commentaire à une tâche (POST /api/tasks/{taskId}/comments)
+- Lister les commentaires d'une tâche (GET /api/tasks/{taskId}/comments)
+- Modifier un commentaire (PUT /api/comments/{id})
+- Supprimer un commentaire (DELETE /api/comments/{id})
+
+Recherche et Statistiques
+- Rechercher des tâches par titre (GET /api/tasks/search?title=...)
+- Filtrer les tâches par statut (GET /api/tasks?status=...)
+- Filtrer les projets par statut (GET /api/projects?status=...)
+- Statistiques d'un projet : nombre de tâches, nombre de tâches terminées, heures estimées totales, heures réalisées totales, pourcentage d'avancement (GET /api/projects/{id}/stats)
+
+Frontend (React / Vue.js / Angular)
+
+L'interface utilisateur doit être composée des pages/vues suivantes :
+
+Liste des Projets
+- Afficher tous les projets sous forme de cartes ou de tableau
+- Pour chaque projet : nom, description, statut, dates
+- Un bouton « Voir détails » qui redirige vers la page du projet
+- Un bouton « Ajouter un projet » qui ouvre un formulaire
+- Un filtre par statut
+
+Détail d'un Projet
+- Informations complètes du projet
+- Liste des tâches du projet avec leur statut, priorité, assigné
+- Possibilité d'ajouter une nouvelle tâche (formulaire)
+- Possibilité de modifier/supprimer une tâche
+- Possibilité de changer le statut d'une tâche
+- Possibilité d'assigner un membre à une tâche
+- Statistiques du projet (affichées graphiquement ou en chiffres)
+- Liste des membres du projet avec possibilité d'ajouter/retirer un membre
+
+Gestion des Membres
+- Liste de tous les membres
+- Formulaire d'ajout d'un membre
+- Possibilité de modifier/supprimer un membre
+
+Détail d'une Tâche (optionnel)
+- Informations complètes de la tâche
+- Historique des commentaires
+- Formulaire d'ajout de commentaire
+- Possibilité de modifier/supprimer un commentaire
+- Suivi des heures (estimées vs réalisées)
+
+Barre de Recherche Globale
+- Un champ de recherche présent sur toutes les pages
+- Recherche par titre de tâche ou nom de projet
+
+NB :
+- BDD à utiliser : « POSTGRESL ».
+- Durée de réalisation du projet : « 2 semaines »
